@@ -6,6 +6,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/google/uuid"
 )
 
 const chirpMaxLength int = 140
@@ -21,38 +24,7 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(fmt.Sprintf(htmlString, cfg.fileserverHits.Load())))
 }
 
-func (cfg *apiConfig) resetHandler(w http.ResponseWriter, _ *http.Request) {
-	cfg.fileserverHits.Store(0)
-	_, _ = w.Write([]byte("OK"))
-}
-
-type error struct {
-	Error string `json:"error"`
-}
-
-func respondWithError(w http.ResponseWriter, statusCode int, message string) {
-	fmt.Println(message)
-	errorJsonString, err := json.Marshal(error{Error: message})
-	if err != nil {
-		fmt.Println("error marshalling error json")
-	}
-	w.WriteHeader(statusCode)
-	w.Write([]byte(errorJsonString))
-}
-
-func respondWithJson(w http.ResponseWriter, statusCode int, payload interface{}) {
-	resp, err := json.Marshal(payload)
-	if err != nil {
-		respondWithError(w, 400, "error marshalling valid response")
-		return
-	}
-
-	w.Write([]byte(resp))
-}
-
 func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
-	defer req.Body.Close()
-
 	type expectedRequest struct {
 		Body string `json:"body"`
 	}
@@ -60,13 +32,13 @@ func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
 	var decoded expectedRequest
 	if err := decoder.Decode(&decoded); err != nil || decoded.Body == "" {
-		respondWithError(w, 400, "error unmarshalling request body")
+		respondWithError(w, http.StatusBadRequest, "error unmarshalling request body")
 		return
 	}
 
 	if len(decoded.Body) > chirpMaxLength {
 		fmt.Println("request body too long (max "+strconv.Itoa(chirpMaxLength)+" characters):", decoded.Body)
-		respondWithError(w, 400, "Chirp is too long")
+		respondWithError(w, http.StatusBadRequest, "Chirp is too long")
 		return
 	}
 
@@ -87,5 +59,43 @@ func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
 	type cleanedResponse struct {
 		CleanedBody string `json:"cleaned_body"`
 	}
-	respondWithJson(w, 200, cleanedResponse{CleanedBody: strings.Join(cleanedWords, " ")})
+	respondWithJson(w, http.StatusOK, cleanedResponse{CleanedBody: strings.Join(cleanedWords, " ")})
+}
+
+func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
+	type expectedRequest struct {
+		Email string `json:"email"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	var decoded expectedRequest
+	if err := decoder.Decode(&decoded); err != nil || decoded.Email == "" {
+		respondWithError(w, http.StatusBadRequest, "error unmarshalling request body")
+		return
+	}
+
+	userRecord, err := cfg.dbQueries.CreateUser(req.Context(), decoded.Email)
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "error creating user")
+		return
+	}
+
+	fmt.Println("user created")
+
+	type usersHandlerResponse struct {
+		Id        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Email     string    `json:"email"`
+	}
+
+	usersResponse := usersHandlerResponse{
+		Id:        userRecord.ID,
+		CreatedAt: userRecord.CreatedAt,
+		UpdatedAt: userRecord.UpdatedAt,
+		Email:     userRecord.Email,
+	}
+
+	fmt.Println("trying to respond with", http.StatusCreated)
+	respondWithJson(w, http.StatusCreated, usersResponse)
 }

@@ -1,18 +1,34 @@
 package main
 
 import (
+	"database/sql"
+	"fmt"
 	"net/http"
+	"os"
 	"sync/atomic"
+
+	"github.com/drewheasman/chirpy/internal/database"
+	"github.com/joho/godotenv"
+	_ "github.com/lib/pq"
 )
 
 func main() {
+	godotenv.Load()
+	dbURL := os.Getenv("DB_URL")
+	db, err := sql.Open("postgres", dbURL)
+	if err != nil {
+		fmt.Println("error starting server")
+	}
+
+	dbQueries := database.New(db)
+
 	serveMux := http.NewServeMux()
 	server := &http.Server{
 		Handler: serveMux,
 		Addr:    ":8080",
 	}
 
-	config := &apiConfig{}
+	config := &apiConfig{dbQueries: dbQueries}
 	fileHandler := http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
 
 	serveMux.Handle("/app/", config.middlewareMetricsIncrement(fileHandler))
@@ -22,11 +38,13 @@ func main() {
 
 	serveMux.HandleFunc("GET /api/healthz", healthzHandler)
 	serveMux.HandleFunc("POST /api/validate_chirp", validateChirpHandler)
+	serveMux.HandleFunc("POST /api/users", config.usersHandler)
 
 	server.ListenAndServe()
 }
 
 type apiConfig struct {
+	dbQueries      *database.Queries
 	fileserverHits atomic.Int32
 }
 

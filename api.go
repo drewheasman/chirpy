@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drewheasman/chirpy/internal/database"
 	"github.com/google/uuid"
 )
 
@@ -24,9 +25,10 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(fmt.Sprintf(htmlString, cfg.fileserverHits.Load())))
 }
 
-func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
+func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, req *http.Request) {
 	type expectedRequest struct {
-		Body string `json:"body"`
+		Body   string    `json:"body"`
+		UserId uuid.UUID `json:"user_id"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -56,10 +58,28 @@ func validateChirpHandler(w http.ResponseWriter, req *http.Request) {
 		cleanedWords = append(cleanedWords, word)
 	}
 
-	type cleanedResponse struct {
-		CleanedBody string `json:"cleaned_body"`
+	userRecord, err := cfg.dbQueries.GetUser(req.Context(), decoded.UserId)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "user_id not found")
 	}
-	respondWithJson(w, http.StatusOK, cleanedResponse{CleanedBody: strings.Join(cleanedWords, " ")})
+
+	chirpRecord, err := cfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{
+		Body:   strings.Join(cleanedWords, " "),
+		UserID: userRecord.ID,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "failed to create chirp")
+	}
+
+	type chirpResponse struct {
+		ID        uuid.UUID `json:"id"`
+		CreatedAt time.Time `json:"created_at"`
+		UpdatedAt time.Time `json:"updated_at"`
+		Body      string    `json:"body"`
+		UserID    uuid.UUID `json:"user_id"`
+	}
+
+	respondWithJson(w, http.StatusCreated, chirpResponse(chirpRecord))
 }
 
 func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {

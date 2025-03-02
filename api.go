@@ -25,7 +25,30 @@ func (cfg *apiConfig) metricsHandler(w http.ResponseWriter, _ *http.Request) {
 	_, _ = w.Write([]byte(fmt.Sprintf(htmlString, cfg.fileserverHits.Load())))
 }
 
-func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, req *http.Request) {
+type Chirp struct {
+	ID        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Body      string    `json:"body"`
+	UserID    uuid.UUID `json:"user_id"`
+}
+
+func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
+	chirps, err := cfg.dbQueries.GetChirps(req.Context())
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error getting chirps")
+		return
+	}
+
+	var chirpsResponse []Chirp
+	for _, c := range chirps {
+		chirpsResponse = append(chirpsResponse, Chirp(c))
+	}
+
+	respondWithJson(w, http.StatusOK, chirpsResponse)
+}
+
+func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Request) {
 	type expectedRequest struct {
 		Body   string    `json:"body"`
 		UserId uuid.UUID `json:"user_id"`
@@ -54,7 +77,6 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, req *http.Request) {
 				word = "****"
 			}
 		}
-		fmt.Println(word)
 		cleanedWords = append(cleanedWords, word)
 	}
 
@@ -71,15 +93,7 @@ func (cfg *apiConfig) chirpsHandler(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, http.StatusNotFound, "failed to create chirp")
 	}
 
-	type chirpResponse struct {
-		ID        uuid.UUID `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Body      string    `json:"body"`
-		UserID    uuid.UUID `json:"user_id"`
-	}
-
-	respondWithJson(w, http.StatusCreated, chirpResponse(chirpRecord))
+	respondWithJson(w, http.StatusCreated, Chirp(chirpRecord))
 }
 
 func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {

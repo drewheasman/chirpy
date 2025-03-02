@@ -37,7 +37,8 @@ func main() {
 	serveMux.HandleFunc("POST /admin/reset", config.resetHandler)
 
 	serveMux.HandleFunc("GET /api/healthz", healthzHandler)
-	serveMux.HandleFunc("POST /api/chirps", config.chirpsHandler)
+	serveMux.HandleFunc("GET /api/chirps", config.getChirpsHandler)
+	serveMux.HandleFunc("POST /api/chirps", config.createChirpHandler)
 	serveMux.HandleFunc("POST /api/users", config.usersHandler)
 
 	server.ListenAndServe()

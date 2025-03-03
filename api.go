@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/drewheasman/chirpy/internal/auth"
 	"github.com/drewheasman/chirpy/internal/database"
 	"github.com/google/uuid"
 )
@@ -33,6 +34,13 @@ type Chirp struct {
 	UserID    uuid.UUID `json:"user_id"`
 }
 
+type User struct {
+	Id        uuid.UUID `json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+	Email     string    `json:"email"`
+}
+
 func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
 	chirps, err := cfg.dbQueries.GetChirps(req.Context())
 	if err != nil {
@@ -46,6 +54,21 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request)
 	}
 
 	respondWithJson(w, http.StatusOK, chirpsResponse)
+}
+
+func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, req *http.Request) {
+	id, err := uuid.Parse(req.PathValue("id"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error parsing uuid from given id path param")
+		return
+	}
+
+	chirp, err := cfg.dbQueries.GetChirp(req.Context(), id)
+	fmt.Println("chirp", chirp)
+	if err != nil {
+		respondWithError(w, http.StatusNotFound, "error getting chirps")
+	}
+	respondWithJson(w, http.StatusOK, Chirp(chirp))
 }
 
 func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Request) {
@@ -97,18 +120,28 @@ func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Reques
 }
 
 func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
-	type expectedRequest struct {
-		Email string `json:"email"`
+	type userCreateRequest struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
-	var decoded expectedRequest
-	if err := decoder.Decode(&decoded); err != nil || decoded.Email == "" {
+	var decoded userCreateRequest
+	if err := decoder.Decode(&decoded); err != nil || decoded.Email == "" || decoded.Password == "" {
 		respondWithError(w, http.StatusBadRequest, "error unmarshalling request body")
 		return
 	}
 
-	userRecord, err := cfg.dbQueries.CreateUser(req.Context(), decoded.Email)
+	hashedPassword, err := auth.HashPassword(decoded.Password)
+	if err != nil {
+		fmt.Print(err.Error())
+		respondWithError(w, http.StatusInternalServerError, "failed to hash password")
+	}
+
+	userRecord, err := cfg.dbQueries.CreateUser(req.Context(), database.CreateUserParams{
+		Email:          decoded.Email,
+		HashedPassword: hashedPassword,
+	})
 	if err != nil {
 		respondWithError(w, http.StatusInternalServerError, "error creating user")
 		return
@@ -116,14 +149,7 @@ func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Println("user created")
 
-	type usersHandlerResponse struct {
-		Id        uuid.UUID `json:"id"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
-		Email     string    `json:"email"`
-	}
-
-	usersResponse := usersHandlerResponse{
+	usersResponse := User{
 		Id:        userRecord.ID,
 		CreatedAt: userRecord.CreatedAt,
 		UpdatedAt: userRecord.UpdatedAt,
@@ -132,4 +158,37 @@ func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Println("trying to respond with", http.StatusCreated)
 	respondWithJson(w, http.StatusCreated, usersResponse)
+}
+
+func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
+	type loginRequest struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	decoder := json.NewDecoder(req.Body)
+	var decoded loginRequest
+	if err := decoder.Decode(&decoded); err != nil {
+		respondWithError(w, http.StatusBadRequest, "error unmarshalling request body")
+		return
+	}
+
+	userRecord, err := cfg.dbQueries.GetUserByEmail(req.Context(), decoded.Email)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "incorrect email or password")
+	}
+
+	usersResponse := User{
+		Id:        userRecord.ID,
+		CreatedAt: userRecord.CreatedAt,
+		UpdatedAt: userRecord.UpdatedAt,
+		Email:     userRecord.Email,
+	}
+
+	if err := auth.CheckPasswordHash(decoded.Password, userRecord.HashedPassword); err != nil {
+		respondWithError(w, http.StatusUnauthorized, "incorrect email or password")
+		return
+	}
+
+	respondWithJson(w, http.StatusOK, usersResponse)
 }

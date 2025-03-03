@@ -38,8 +38,10 @@ func main() {
 
 	serveMux.HandleFunc("GET /api/healthz", healthzHandler)
 	serveMux.HandleFunc("GET /api/chirps", config.getChirpsHandler)
+	serveMux.HandleFunc("GET /api/chirps/{id}", config.getChirpHandler)
 	serveMux.HandleFunc("POST /api/chirps", config.createChirpHandler)
 	serveMux.HandleFunc("POST /api/users", config.usersHandler)
+	serveMux.HandleFunc("POST /api/login", config.loginHandler)
 
 	server.ListenAndServe()
 }

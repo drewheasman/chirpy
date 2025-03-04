@@ -19,6 +19,7 @@ func main() {
 	if err != nil {
 		fmt.Println("error starting server")
 	}
+	serverSecret := os.Getenv("SERVER_SECRET")
 
 	dbQueries := database.New(db)
 
@@ -28,7 +29,10 @@ func main() {
 		Addr:    ":8080",
 	}
 
-	config := &apiConfig{dbQueries: dbQueries}
+	config := &apiConfig{
+		dbQueries:    dbQueries,
+		serverSecret: serverSecret,
+	}
 	fileHandler := http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
 
 	serveMux.Handle("/app/", config.middlewareMetricsIncrement(fileHandler))
@@ -49,6 +53,7 @@ func main() {
 type apiConfig struct {
 	dbQueries      *database.Queries
 	fileserverHits atomic.Int32
+	serverSecret   string
 }
 
 func (cfg *apiConfig) middlewareMetricsIncrement(next http.Handler) http.Handler {

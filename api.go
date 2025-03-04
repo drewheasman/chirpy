@@ -39,6 +39,7 @@ type User struct {
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Email     string    `json:"email"`
+	Token     string    `json:"token"`
 }
 
 func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
@@ -73,8 +74,21 @@ func (cfg *apiConfig) getChirpHandler(w http.ResponseWriter, req *http.Request) 
 
 func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Request) {
 	type expectedRequest struct {
-		Body   string    `json:"body"`
-		UserId uuid.UUID `json:"user_id"`
+		Body string `json:"body"`
+	}
+
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	id, err := auth.ValidateJWT(token, cfg.serverSecret)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -103,9 +117,10 @@ func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Reques
 		cleanedWords = append(cleanedWords, word)
 	}
 
-	userRecord, err := cfg.dbQueries.GetUser(req.Context(), decoded.UserId)
+	userRecord, err := cfg.dbQueries.GetUser(req.Context(), id)
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "user_id not found")
+		return
 	}
 
 	chirpRecord, err := cfg.dbQueries.CreateChirp(req.Context(), database.CreateChirpParams{
@@ -114,6 +129,7 @@ func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Reques
 	})
 	if err != nil {
 		respondWithError(w, http.StatusNotFound, "failed to create chirp")
+		return
 	}
 
 	respondWithJson(w, http.StatusCreated, Chirp(chirpRecord))
@@ -136,6 +152,7 @@ func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		fmt.Print(err.Error())
 		respondWithError(w, http.StatusInternalServerError, "failed to hash password")
+		return
 	}
 
 	userRecord, err := cfg.dbQueries.CreateUser(req.Context(), database.CreateUserParams{
@@ -162,8 +179,9 @@ func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
 
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	type loginRequest struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
+		Email            string `json:"email"`
+		Password         string `json:"password"`
+		ExpiresInSeconds int    `json:"expires_in_seconds"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -173,9 +191,14 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	if decoded.ExpiresInSeconds == 0 || decoded.ExpiresInSeconds > 3600 {
+		decoded.ExpiresInSeconds = 3600
+	}
+
 	userRecord, err := cfg.dbQueries.GetUserByEmail(req.Context(), decoded.Email)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, "incorrect email or password")
+		return
 	}
 
 	usersResponse := User{
@@ -189,6 +212,13 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 		respondWithError(w, http.StatusUnauthorized, "incorrect email or password")
 		return
 	}
+
+	jwt, err := auth.MakeJWT(usersResponse.Id, cfg.serverSecret, time.Duration(decoded.ExpiresInSeconds)*time.Second)
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+	usersResponse.Token = jwt
 
 	respondWithJson(w, http.StatusOK, usersResponse)
 }

@@ -35,11 +35,12 @@ type Chirp struct {
 }
 
 type User struct {
-	Id        uuid.UUID `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
-	Email     string    `json:"email"`
-	Token     string    `json:"token"`
+	Id           uuid.UUID `json:"id"`
+	CreatedAt    time.Time `json:"created_at"`
+	UpdatedAt    time.Time `json:"updated_at"`
+	Email        string    `json:"email"`
+	Token        string    `json:"token"`
+	RefreshToken string    `json:"refresh_token"`
 }
 
 func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
@@ -179,9 +180,8 @@ func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
 
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	type loginRequest struct {
-		Email            string `json:"email"`
-		Password         string `json:"password"`
-		ExpiresInSeconds int    `json:"expires_in_seconds"`
+		Email    string `json:"email"`
+		Password string `json:"password"`
 	}
 
 	decoder := json.NewDecoder(req.Body)
@@ -189,10 +189,6 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	if err := decoder.Decode(&decoded); err != nil {
 		respondWithError(w, http.StatusBadRequest, "error unmarshalling request body")
 		return
-	}
-
-	if decoded.ExpiresInSeconds == 0 || decoded.ExpiresInSeconds > 3600 {
-		decoded.ExpiresInSeconds = 3600
 	}
 
 	userRecord, err := cfg.dbQueries.GetUserByEmail(req.Context(), decoded.Email)
@@ -213,12 +209,86 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
-	jwt, err := auth.MakeJWT(usersResponse.Id, cfg.serverSecret, time.Duration(decoded.ExpiresInSeconds)*time.Second)
+	jwt, err := auth.MakeJWT(usersResponse.Id, cfg.serverSecret, time.Hour)
 	if err != nil {
 		respondWithError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	usersResponse.Token = jwt
 
+	refreshToken, err := auth.MakeRefreshToken()
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to make refresh token")
+		return
+	}
+	err = cfg.dbQueries.CreateRefreshToken(req.Context(), database.CreateRefreshTokenParams{
+		Token:     refreshToken,
+		UserID:    userRecord.ID,
+		ExpiresAt: time.Now().Add(time.Hour * 24 * 60),
+	})
+	if err != nil {
+		respondWithError(w, http.StatusInternalServerError, "Failed to save refresh token")
+		return
+	}
+	usersResponse.RefreshToken = refreshToken
+
+	fmt.Println("user logged in")
+
 	respondWithJson(w, http.StatusOK, usersResponse)
+}
+
+func (cfg *apiConfig) refreshHandler(w http.ResponseWriter, req *http.Request) {
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	userId, err := cfg.dbQueries.GetUserFromRefreshToken(req.Context(), token)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	jwt, err := auth.MakeJWT(userId, cfg.serverSecret, time.Hour)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, err.Error())
+		return
+	}
+
+	type tokenResponse struct {
+		Token string `json:"token"`
+	}
+
+	respondWithJson(w, http.StatusOK, tokenResponse{Token: jwt})
+}
+
+func (cfg *apiConfig) revokeHandler(w http.ResponseWriter, req *http.Request) {
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	_, err = cfg.dbQueries.GetUserFromRefreshToken(req.Context(), token)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	err = cfg.dbQueries.RevokeToken(req.Context(), token)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusInternalServerError, "Error revoking token")
+		return
+	}
+
+	fmt.Println("token revoked")
+
+	respondNoContent(w, http.StatusNoContent)
 }

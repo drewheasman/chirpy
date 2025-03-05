@@ -46,6 +46,8 @@ func main() {
 	serveMux.HandleFunc("POST /api/chirps", config.createChirpHandler)
 	serveMux.HandleFunc("POST /api/users", config.usersHandler)
 	serveMux.HandleFunc("POST /api/login", config.loginHandler)
+	serveMux.HandleFunc("POST /api/refresh", config.refreshHandler)
+	serveMux.HandleFunc("POST /api/revoke", config.revokeHandler)
 
 	server.ListenAndServe()
 }

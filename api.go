@@ -136,14 +136,14 @@ func (cfg *apiConfig) createChirpHandler(w http.ResponseWriter, req *http.Reques
 	respondWithJson(w, http.StatusCreated, Chirp(chirpRecord))
 }
 
-func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
-	type userCreateRequest struct {
-		Email    string `json:"email"`
-		Password string `json:"password"`
-	}
+type createUpdateUserRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
 
+func (cfg *apiConfig) createUsersHandler(w http.ResponseWriter, req *http.Request) {
 	decoder := json.NewDecoder(req.Body)
-	var decoded userCreateRequest
+	var decoded createUpdateUserRequest
 	if err := decoder.Decode(&decoded); err != nil || decoded.Email == "" || decoded.Password == "" {
 		respondWithError(w, http.StatusBadRequest, "error unmarshalling request body")
 		return
@@ -176,6 +176,52 @@ func (cfg *apiConfig) usersHandler(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Println("trying to respond with", http.StatusCreated)
 	respondWithJson(w, http.StatusCreated, usersResponse)
+}
+
+func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, req *http.Request) {
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	id, err := auth.ValidateJWT(token, cfg.serverSecret)
+
+	decoder := json.NewDecoder(req.Body)
+	var decoded createUpdateUserRequest
+	if err := decoder.Decode(&decoded); err != nil || decoded.Email == "" || decoded.Password == "" {
+		respondWithError(w, http.StatusBadRequest, "error unmarshalling request body")
+		return
+	}
+
+	hashedPassword, err := auth.HashPassword(decoded.Password)
+	if err != nil {
+		fmt.Print(err.Error())
+		respondWithError(w, http.StatusUnauthorized, "failed to hash password")
+		return
+	}
+
+	userRecord, err := cfg.dbQueries.UpdateUser(req.Context(), database.UpdateUserParams{
+		ID:             id,
+		Email:          decoded.Email,
+		HashedPassword: hashedPassword,
+	})
+	if err != nil {
+		respondWithError(w, http.StatusUnauthorized, "error updating user")
+		return
+	}
+
+	fmt.Println("user updated")
+
+	usersResponse := User{
+		Id:        userRecord.ID,
+		CreatedAt: userRecord.CreatedAt,
+		UpdatedAt: userRecord.UpdatedAt,
+		Email:     userRecord.Email,
+	}
+
+	respondWithJson(w, http.StatusOK, usersResponse)
 }
 
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {

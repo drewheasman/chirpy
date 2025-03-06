@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,14 @@ type User struct {
 func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
 	queryParams := req.URL.Query()
 	authorId := queryParams.Get("author_id")
+	sortOrder := queryParams.Get("sort")
+	if sortOrder == "" {
+		sortOrder = "asc"
+	}
+	if sortOrder != "asc" && sortOrder != "desc" {
+		respondWithError(w, http.StatusBadRequest, "sort must be asc or desc")
+		return
+	}
 
 	var chirps []database.Chirp
 	var err error
@@ -61,6 +70,7 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request)
 		chirps, err = cfg.dbQueries.GetChirps(req.Context())
 	}
 	if err != nil {
+		fmt.Println(err)
 		respondWithError(w, http.StatusBadRequest, "error getting chirps")
 		return
 	}
@@ -69,6 +79,13 @@ func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request)
 	for _, c := range chirps {
 		chirpsResponse = append(chirpsResponse, Chirp(c))
 	}
+
+	sort.Slice(chirpsResponse, func(i, j int) bool {
+		if sortOrder == "asc" {
+			return chirpsResponse[i].CreatedAt.Before(chirpsResponse[j].CreatedAt)
+		}
+		return chirpsResponse[i].CreatedAt.After(chirpsResponse[j].CreatedAt)
+	})
 
 	respondWithJson(w, http.StatusOK, chirpsResponse)
 }

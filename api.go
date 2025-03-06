@@ -41,10 +41,25 @@ type User struct {
 	Email        string    `json:"email"`
 	Token        string    `json:"token"`
 	RefreshToken string    `json:"refresh_token"`
+	IsChirpyRed  bool      `json:"is_chirpy_red"`
 }
 
 func (cfg *apiConfig) getChirpsHandler(w http.ResponseWriter, req *http.Request) {
-	chirps, err := cfg.dbQueries.GetChirps(req.Context())
+	queryParams := req.URL.Query()
+	authorId := queryParams.Get("author_id")
+
+	var chirps []database.Chirp
+	var err error
+	if authorId != "" {
+		authorUUID, err := uuid.Parse(authorId)
+		if err != nil {
+			respondWithError(w, http.StatusBadRequest, "failed to parse author_id")
+			return
+		}
+		chirps, err = cfg.dbQueries.GetChirpsByUser(req.Context(), authorUUID)
+	} else {
+		chirps, err = cfg.dbQueries.GetChirps(req.Context())
+	}
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "error getting chirps")
 		return
@@ -168,10 +183,11 @@ func (cfg *apiConfig) createUsersHandler(w http.ResponseWriter, req *http.Reques
 	fmt.Println("user created")
 
 	usersResponse := User{
-		Id:        userRecord.ID,
-		CreatedAt: userRecord.CreatedAt,
-		UpdatedAt: userRecord.UpdatedAt,
-		Email:     userRecord.Email,
+		Id:          userRecord.ID,
+		CreatedAt:   userRecord.CreatedAt,
+		UpdatedAt:   userRecord.UpdatedAt,
+		Email:       userRecord.Email,
+		IsChirpyRed: userRecord.IsChirpyRed,
 	}
 
 	fmt.Println("trying to respond with", http.StatusCreated)
@@ -215,10 +231,11 @@ func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, req *http.Request
 	fmt.Println("user updated")
 
 	usersResponse := User{
-		Id:        userRecord.ID,
-		CreatedAt: userRecord.CreatedAt,
-		UpdatedAt: userRecord.UpdatedAt,
-		Email:     userRecord.Email,
+		Id:          userRecord.ID,
+		CreatedAt:   userRecord.CreatedAt,
+		UpdatedAt:   userRecord.UpdatedAt,
+		Email:       userRecord.Email,
+		IsChirpyRed: userRecord.IsChirpyRed,
 	}
 
 	respondWithJson(w, http.StatusOK, usersResponse)
@@ -289,10 +306,11 @@ func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	}
 
 	usersResponse := User{
-		Id:        userRecord.ID,
-		CreatedAt: userRecord.CreatedAt,
-		UpdatedAt: userRecord.UpdatedAt,
-		Email:     userRecord.Email,
+		Id:          userRecord.ID,
+		CreatedAt:   userRecord.CreatedAt,
+		UpdatedAt:   userRecord.UpdatedAt,
+		Email:       userRecord.Email,
+		IsChirpyRed: userRecord.IsChirpyRed,
 	}
 
 	if err := auth.CheckPasswordHash(decoded.Password, userRecord.HashedPassword); err != nil {
@@ -381,5 +399,52 @@ func (cfg *apiConfig) revokeHandler(w http.ResponseWriter, req *http.Request) {
 
 	fmt.Println("token revoked")
 
+	respondNoContent(w, http.StatusNoContent)
+}
+
+func (cfg *apiConfig) polkaWebhooksHandler(w http.ResponseWriter, req *http.Request) {
+	type polkaWebhookRequest struct {
+		Event string `json:"event"`
+		Data  struct {
+			UserId string `json:"user_id"`
+		} `json:"data"`
+	}
+
+	apiKey, err := auth.GetAPIKey(req.Header)
+	if err != nil || apiKey != cfg.polkaKey {
+		fmt.Println("invalid ApiKey")
+		respondNoContent(w, http.StatusUnauthorized)
+		return
+	}
+
+	var decoded polkaWebhookRequest
+	decoder := json.NewDecoder(req.Body)
+	if err := decoder.Decode(&decoded); err != nil {
+		fmt.Println("error decoding request")
+		respondNoContent(w, http.StatusNoContent)
+		return
+	}
+
+	if decoded.Event != "user.upgraded" {
+		fmt.Println("unknown event")
+		respondNoContent(w, http.StatusNoContent)
+		return
+	}
+
+	userId, err := uuid.Parse(decoded.Data.UserId)
+	if err != nil {
+		fmt.Println("error parsing user_id")
+		respondNoContent(w, http.StatusNoContent)
+		return
+	}
+
+	err = cfg.dbQueries.SetChirpyRed(req.Context(), userId)
+	if err != nil {
+		fmt.Println("error setting chirpy red")
+		respondNoContent(w, http.StatusNotFound)
+		return
+	}
+
+	fmt.Println("set chirpy red")
 	respondNoContent(w, http.StatusNoContent)
 }

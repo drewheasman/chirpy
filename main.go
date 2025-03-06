@@ -14,14 +14,18 @@ import (
 
 func main() {
 	godotenv.Load()
+
 	dbURL := os.Getenv("DB_URL")
 	db, err := sql.Open("postgres", dbURL)
 	if err != nil {
 		fmt.Println("error starting server")
 	}
-	serverSecret := os.Getenv("SERVER_SECRET")
 
-	dbQueries := database.New(db)
+	config := &apiConfig{
+		dbQueries:    database.New(db),
+		serverSecret: os.Getenv("SERVER_SECRET"),
+		polkaKey:     os.Getenv("POLKA_KEY"),
+	}
 
 	serveMux := http.NewServeMux()
 	server := &http.Server{
@@ -29,10 +33,6 @@ func main() {
 		Addr:    ":8080",
 	}
 
-	config := &apiConfig{
-		dbQueries:    dbQueries,
-		serverSecret: serverSecret,
-	}
 	fileHandler := http.StripPrefix("/app/", http.FileServer(http.Dir(".")))
 
 	serveMux.Handle("/app/", config.middlewareMetricsIncrement(fileHandler))
@@ -50,6 +50,7 @@ func main() {
 	serveMux.HandleFunc("POST /api/login", config.loginHandler)
 	serveMux.HandleFunc("POST /api/refresh", config.refreshHandler)
 	serveMux.HandleFunc("POST /api/revoke", config.revokeHandler)
+	serveMux.HandleFunc("POST /api/polka/webhooks", config.polkaWebhooksHandler)
 
 	server.ListenAndServe()
 }
@@ -58,6 +59,7 @@ type apiConfig struct {
 	dbQueries      *database.Queries
 	fileserverHits atomic.Int32
 	serverSecret   string
+	polkaKey       string
 }
 
 func (cfg *apiConfig) middlewareMetricsIncrement(next http.Handler) http.Handler {

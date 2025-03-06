@@ -43,6 +43,7 @@ func main() {
 	serveMux.HandleFunc("GET /api/healthz", getHealthzHandler)
 	serveMux.HandleFunc("GET /api/chirps", config.getChirpsHandler)
 	serveMux.HandleFunc("GET /api/chirps/{id}", config.getChirpHandler)
+	serveMux.HandleFunc("DELETE /api/chirps/{id}", config.deleteChirpHandler)
 	serveMux.HandleFunc("POST /api/chirps", config.createChirpHandler)
 	serveMux.HandleFunc("POST /api/users", config.createUsersHandler)
 	serveMux.HandleFunc("PUT /api/users", config.updateUserHandler)

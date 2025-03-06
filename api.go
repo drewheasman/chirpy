@@ -224,6 +224,51 @@ func (cfg *apiConfig) updateUserHandler(w http.ResponseWriter, req *http.Request
 	respondWithJson(w, http.StatusOK, usersResponse)
 }
 
+func (cfg *apiConfig) deleteChirpHandler(w http.ResponseWriter, req *http.Request) {
+	id, err := uuid.Parse(req.PathValue("id"))
+	if err != nil {
+		respondWithError(w, http.StatusBadRequest, "error parsing uuid from given id path param")
+		return
+	}
+
+	token, err := auth.GetBearerToken(req.Header)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	userId, err := auth.ValidateJWT(token, cfg.serverSecret)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusUnauthorized, "Not authorized")
+		return
+	}
+
+	chirp, err := cfg.dbQueries.GetChirp(req.Context(), id)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusNotFound, "Chirp not found")
+		return
+	}
+	if chirp.UserID != userId {
+		fmt.Println(err)
+		respondWithError(w, http.StatusForbidden, "Can't delete chirp for a different user")
+		return
+	}
+
+	err = cfg.dbQueries.DeleteChirp(req.Context(), id)
+	if err != nil {
+		fmt.Println(err)
+		respondWithError(w, http.StatusInternalServerError, "Error deleting chirp")
+		return
+	}
+
+	fmt.Println("chirp deleted")
+
+	respondNoContent(w, http.StatusNoContent)
+}
+
 func (cfg *apiConfig) loginHandler(w http.ResponseWriter, req *http.Request) {
 	type loginRequest struct {
 		Email    string `json:"email"`
